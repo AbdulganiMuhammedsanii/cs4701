@@ -1,0 +1,3 @@
+{"id": 1, "claim": "Paris is the capital of France.", "evidence": "Paris is the capital and most populous city of France.", "fever_label": "SUPPORTS", "label": "supported"}
+{"id": 2, "claim": "The Moon is made mostly of cheese.", "evidence": "The Moon is Earth's only natural satellite and is composed primarily of silicate rock.", "fever_label": "REFUTES", "label": "contradicted"}
+{"id": 3, "claim": "Nikolaj Coster-Waldau was born on Mars.", "evidence": "Nikolaj Coster-Waldau is a Danish actor and producer.", "fever_label": "NOT ENOUGH INFO", "label": "not_supported"}
