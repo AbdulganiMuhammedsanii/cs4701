@@ -46,6 +46,8 @@ pip install -r requirements.txt
 
 **Note:** The HuggingFace FEVER loader requires `datasets>=2.14,<3` (2.x still supports the FEVER dataset script).
 
+**Paths:** run every `python scripts/...` command with the shell **current working directory** set to the **repository root** (the `cs4701` folder), so `data/...` and `results/...` resolve correctly.
+
 ## 1) Preprocess FEVER (wiki + claims + evidence text)
 
 Downloads **wiki-pages.zip** (~1.7 GB) from [fever.ai/download/fever/wiki-pages.zip](https://fever.ai/download/fever/wiki-pages.zip), builds a SQLite sentence index, and writes JSONL with resolved evidence sentences.
@@ -53,7 +55,7 @@ Downloads **wiki-pages.zip** (~1.7 GB) from [fever.ai/download/fever/wiki-pages.
 Default indexing is **subset**: only Wikipedia pages needed for the chosen splits / `--max-samples` (much faster than indexing the full dump). Use `--full-wiki-index` for the complete corpus.
 
 ```bash
-python scripts/preprocess_fever.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/preprocess_fever.py \
   --raw-dir data/raw \
   --processed-dir data/processed \
   --splits paper_dev \
@@ -61,16 +63,29 @@ python scripts/preprocess_fever.py \
   --rebuild-wiki-index
 ```
 
-Outputs: `data/processed/fever_paper_dev.jsonl`, `data/processed/wiki_sentences.sqlite`.
+Outputs (for that command): `data/processed/fever_paper_dev.jsonl`, `data/processed/wiki_sentences.sqlite`.
 
-**Smoke test without the full wiki download:** point `--raw-dir` at `[data/fixtures/wiki_shard](data/fixtures/wiki_shard)` and pass `--skip-wiki-download` so only that shard is indexed (most rows will be skipped for missing pages; this still exercises the pipeline).
+**Also export `labelled_dev`** (for held-out–style eval vs training on `paper_dev` only). The wiki index must include evidence pages for **both** splits if you use subset indexing, so pass **both** split names when rebuilding the index:
+
+```bash
+source .venv/bin/activate && PYTHONPATH=src python scripts/preprocess_fever.py \
+  --raw-dir data/raw \
+  --processed-dir data/processed \
+  --splits paper_dev labelled_dev \
+  --rebuild-wiki-index \
+  --skip-wiki-download
+```
+
+That writes `data/processed/fever_labelled_dev.jsonl` (and refreshes `fever_paper_dev.jsonl`). Omit `--skip-wiki-download` the first time if wiki shards are not extracted yet.
+
+**Smoke test without the full wiki download:** point `--raw-dir` at [`data/fixtures/wiki_shard`](data/fixtures/wiki_shard) and pass `--skip-wiki-download` so only that shard is indexed (most rows will be skipped for missing pages; this still exercises the pipeline).
 
 ## 2) Fine-tune the hallucination / verification classifier (optional)
 
 **Three-way** (supported / contradicted / not_supported) — default `--out-dir` is `checkpoints/verify_roberta`:
 
 ```bash
-python scripts/train_detector.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/train_detector.py \
   --train-jsonl data/processed/fever_paper_dev.jsonl \
   --eval-jsonl data/processed/fever_labelled_dev.jsonl \
   --task three_way \
@@ -83,7 +98,7 @@ python scripts/train_detector.py \
 **Binary** (supported vs unsupported, with `contradicted` and `not_supported` merged at training time) — default `--out-dir` is `checkpoints/verify_roberta_binary` when `--out-dir` is omitted:
 
 ```bash
-python scripts/train_detector.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/train_detector.py \
   --train-jsonl data/processed/fever_paper_dev.jsonl \
   --eval-jsonl data/processed/fever_labelled_dev.jsonl \
   --task binary \
@@ -94,40 +109,63 @@ python scripts/train_detector.py \
 
 ## 3) Evaluate baselines vs NLI vs fine-tuned
 
-Add `**--report-binary**` to also print **supported vs unsupported** metrics (three-way predictions collapsed with the same rule as training binary labels).
+Run commands with your shell **current directory set to this repo root** (`cs4701`), the venv active, and **`PYTHONPATH=src`** so `import halludet` works (all examples below use this).
+
+Add **`--report-binary`** to also print **supported vs unsupported** metrics (three-way predictions collapsed with the same rule as the binary training labels).
+
+**Typical split usage:** train on `fever_paper_dev.jsonl` (see §2); report **final** numbers on **`fever_labelled_dev.jsonl`** so `--data` is not the training file. If you pass `--eval-jsonl data/processed/fever_labelled_dev.jsonl` during `Trainer` fine-tuning, that split was still used for **early stopping / `load_best_model_at_end`**—state that in the write-up; it is not the same as training on those rows, but it is weaker than a third, untouched test split.
+
+**Paper dev** (subset / debugging):
 
 ```bash
-python scripts/evaluate_all.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/evaluate_all.py \
   --data data/processed/fever_paper_dev.jsonl \
   --max-samples 500 \
   --embedding-threshold 0.35 \
   --finetuned-dir checkpoints/verify_roberta \
   --report-binary \
-  --output-json results/metrics.json
+  --output-json results/metrics_paper_dev.json
 ```
 
-Fine-tuned checkpoints are loaded only when `**config.json` and model weights** (`model.safetensors` or `pytorch_model.bin`) are present; otherwise the fine-tuned block is skipped with a log message.
+**Labelled dev** (common choice for final tables when training on `paper_dev` only):
+
+```bash
+source .venv/bin/activate && PYTHONPATH=src python scripts/evaluate_all.py \
+  --data data/processed/fever_labelled_dev.jsonl \
+  --embedding-threshold 0.5 \
+  --finetuned-dir checkpoints/verify_roberta \
+  --report-binary \
+  --output-json results/metrics_labelled_dev.json
+```
+
+Fine-tuned checkpoints are loaded only when **`config.json` and model weights** (`model.safetensors` or `pytorch_model.bin`, or sharded `model-*.safetensors`) are present; otherwise the fine-tuned block is skipped with a log message.
+
+**What `--output-json` saves:** aggregate metrics per method only (no per-example predictions, no copy of the dataset). The `results/` directory is **gitignored**; JSON files still live on disk for your report—commit them elsewhere if your course requires artifacts in the repo.
 
 Quick test without downloads:
 
 ```bash
-python scripts/evaluate_all.py --data data/fixtures/sample_processed.jsonl --max-samples 10
+source .venv/bin/activate && PYTHONPATH=src python scripts/evaluate_all.py \
+  --data data/fixtures/sample_processed.jsonl \
+  --max-samples 10
 ```
 
 **Initial experiments** (embedding cosine threshold sweep + NLI + optional fine-tuned, JSON log):
 
 ```bash
-python scripts/run_initial_experiments.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/run_initial_experiments.py \
   --data data/processed/fever_paper_dev.jsonl \
   --max-samples 500 \
   --report-binary \
   --output-json results/initial_experiments.json
 ```
 
+**Choosing `--embedding-threshold`:** the script prints “Best embedding sweep (by **macro F1** on the **three-way** embedding predictions).” For a **binary** (supported vs unsupported) story, open `results/initial_experiments.json` and compare `embedding_threshold_sweep[].binary.f1_macro` (or accuracy) across `threshold` values; pick the threshold that maximizes the metric you report, then pass it as `--embedding-threshold` to `evaluate_all.py`. Re-run the sweep if you change `--data`, `--max-samples`, or the embedding model.
+
 **Evidence length ablation** (prefix truncation of evidence; reuses one embedding / one NLI load across lengths):
 
 ```bash
-python scripts/ablate_evidence_length.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/ablate_evidence_length.py \
   --data data/processed/fever_paper_dev.jsonl \
   --max-samples 500 \
   --max-evidence-chars 0 128 256 512 \
@@ -137,7 +175,7 @@ python scripts/ablate_evidence_length.py \
 **Claim vs response ablation** (multi-claim fixture; response rules are printed in the output `meta`):
 
 ```bash
-python scripts/ablate_claim_vs_response.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/ablate_claim_vs_response.py \
   --data data/fixtures/multi_claim_responses.jsonl \
   --output-json results/claim_vs_response_ablation.json
 ```
@@ -145,7 +183,7 @@ python scripts/ablate_claim_vs_response.py \
 **Paired bootstrap** on per-example accuracy (subset of models; requires at least two that succeed):
 
 ```bash
-python scripts/compare_models_significance.py \
+source .venv/bin/activate && PYTHONPATH=src python scripts/compare_models_significance.py \
   --data data/processed/fever_paper_dev.jsonl \
   --max-samples 500 \
   --models embedding,nli,finetuned \

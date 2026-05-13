@@ -175,3 +175,17 @@ class WikiSentenceIndex:
         if row:
             return row[0]
         return None
+
+    def random_sentence(self, rng) -> str | None:
+        """Uniformly sample one sentence text. Used as distractor evidence for NEI rows."""
+        conn = sqlite3.connect(self.db_path)
+        n = conn.execute("SELECT COUNT(*) FROM sentences").fetchone()[0]
+        if n == 0:
+            conn.close()
+            return None
+        offset = rng.randrange(n)
+        row = conn.execute(
+            "SELECT text FROM sentences LIMIT 1 OFFSET ?", (offset,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else None

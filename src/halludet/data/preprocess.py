@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 from pathlib import Path
 
 from tqdm import tqdm
@@ -37,14 +38,17 @@ def preprocess_split(
     wiki_index: WikiSentenceIndex,
     max_samples: int | None = None,
     skip_missing_evidence: bool = True,
+    nei_seed: int = 0,
 ) -> Path:
     processed_dir.mkdir(parents=True, exist_ok=True)
     out_path = processed_dir / f"fever_{split}.jsonl"
     ds = load_fever_split(split)
     n = len(ds) if max_samples is None else min(max_samples, len(ds))
 
+    rng = random.Random(nei_seed)
     kept = 0
     skipped = 0
+    nei_kept = 0
     with open(out_path, "w", encoding="utf-8") as out:
         for i in tqdm(range(n), desc=f"preprocess {split}"):
             row = ds[i]
@@ -53,14 +57,21 @@ def preprocess_split(
                 skipped += 1
                 continue
             claim = row["claim"]
-            wiki = row["evidence_wiki_url"]
-            sid = row["evidence_sentence_id"]
-            text = wiki_index.lookup(wiki, sid)
-            if text is None:
-                skipped += 1
-                if skip_missing_evidence:
+            if label_raw == "NOT ENOUGH INFO":
+                text = wiki_index.random_sentence(rng)
+                if text is None:
+                    skipped += 1
                     continue
-                text = ""
+                nei_kept += 1
+            else:
+                wiki = row["evidence_wiki_url"]
+                sid = row["evidence_sentence_id"]
+                text = wiki_index.lookup(wiki, sid)
+                if text is None:
+                    skipped += 1
+                    if skip_missing_evidence:
+                        continue
+                    text = ""
             rec = {
                 "id": row["id"],
                 "claim": claim,
@@ -70,6 +81,7 @@ def preprocess_split(
             }
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             kept += 1
+    logger.info("NEI rows kept with distractor evidence: %d", nei_kept)
 
     logger.info(
         "Wrote %s (%d rows kept, %d skipped)", out_path, kept, skipped
