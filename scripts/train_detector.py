@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fine-tune the claim–evidence verifier (RoBERTa 3-way)."""
+"""Fine-tune the claim–evidence verifier (RoBERTa three-way or binary)."""
 
 import sys
 from pathlib import Path

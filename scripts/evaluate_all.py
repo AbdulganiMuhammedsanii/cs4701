@@ -12,12 +12,25 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tqdm import tqdm
 
-from halludet.eval.metrics import classification_metrics, load_jsonl
+from halludet.eval.metrics import (
+    classification_metrics,
+    collapse_to_supported_vs_unsupported,
+    load_jsonl,
+)
+from halludet.verify.checkpoint_utils import checkpoint_has_classifier_weights
 from halludet.verify.embedding_baseline import EmbeddingBaseline
 from halludet.verify.finetuned import FineTunedVerifier
 from halludet.verify.nli_pretrained import NLIClassifier
 
 logger = logging.getLogger(__name__)
+
+BINARY_LABELS = ("supported", "unsupported")
+
+
+def _binary_metrics(y_true: list[str], y_pred: list[str]) -> dict:
+    yt = collapse_to_supported_vs_unsupported(y_true)
+    yp = collapse_to_supported_vs_unsupported(y_pred)
+    return classification_metrics(yt, yp, labels=BINARY_LABELS)
 
 
 def main() -> None:
@@ -40,6 +53,11 @@ def main() -> None:
     )
     p.add_argument("--skip-nli", action="store_true", help="Skip slow transformer NLI")
     p.add_argument("--skip-embedding", action="store_true")
+    p.add_argument(
+        "--report-binary",
+        action="store_true",
+        help="Also report supported vs unsupported (contradicted+not_supported → unsupported)",
+    )
     p.add_argument("--output-json", type=Path, default=None)
     args = p.parse_args()
 
@@ -66,6 +84,12 @@ def main() -> None:
             )
         )
         print(results["embedding"]["report"])
+        if args.report_binary:
+            bm = _binary_metrics(y_true, y_pred)
+            print("=== Embedding baseline (binary supported vs unsupported) ===")
+            print(json.dumps({k: v for k, v in bm.items() if k != "report"}, indent=2))
+            print(bm["report"])
+            results["embedding_binary"] = bm
 
     if not args.skip_nli:
         logger.info("Pretrained NLI…")
@@ -75,20 +99,50 @@ def main() -> None:
         print("=== Pretrained NLI ===")
         print(json.dumps({k: v for k, v in results["nli"].items() if k != "report"}, indent=2))
         print(results["nli"]["report"])
+        if args.report_binary:
+            bm = _binary_metrics(y_true, y_pred)
+            print("=== Pretrained NLI (binary supported vs unsupported) ===")
+            print(json.dumps({k: v for k, v in bm.items() if k != "report"}, indent=2))
+            print(bm["report"])
+            results["nli_binary"] = bm
 
     ft_dir = args.finetuned_dir
-    if ft_dir.is_dir() and (ft_dir / "config.json").is_file():
+    if (
+        ft_dir.is_dir()
+        and (ft_dir / "config.json").is_file()
+        and checkpoint_has_classifier_weights(ft_dir)
+    ):
         logger.info("Fine-tuned verifier…")
         ft = FineTunedVerifier(str(ft_dir))
-        y_pred = [
-            ft.predict_three_way(r["claim"], r["evidence"]) for r in tqdm(rows, desc="finetuned")
-        ]
-        results["finetuned"] = classification_metrics(y_true, y_pred)
-        print("=== Fine-tuned ===")
+        if ft.num_labels == 2:
+            y_true_ft = collapse_to_supported_vs_unsupported(y_true)
+            y_pred = [
+                ft.predict_binary(r["claim"], r["evidence"]) for r in tqdm(rows, desc="finetuned")
+            ]
+            results["finetuned"] = classification_metrics(y_true_ft, y_pred, labels=BINARY_LABELS)
+            print("=== Fine-tuned (binary head) ===")
+        else:
+            y_pred = [
+                ft.predict_three_way(r["claim"], r["evidence"]) for r in tqdm(rows, desc="finetuned")
+            ]
+            results["finetuned"] = classification_metrics(y_true, y_pred)
+            print("=== Fine-tuned (three-way) ===")
         print(json.dumps({k: v for k, v in results["finetuned"].items() if k != "report"}, indent=2))
         print(results["finetuned"]["report"])
+        if args.report_binary and ft.num_labels == 3:
+            bm = _binary_metrics(y_true, y_pred)
+            print("=== Fine-tuned (binary collapse of predictions) ===")
+            print(json.dumps({k: v for k, v in bm.items() if k != "report"}, indent=2))
+            print(bm["report"])
+            results["finetuned_binary"] = bm
     else:
-        logger.info("Skipping fine-tuned (no checkpoint at %s)", ft_dir)
+        if ft_dir.is_dir() and (ft_dir / "config.json").is_file():
+            logger.info(
+                "Skipping fine-tuned (checkpoint at %s has config but no model weights)",
+                ft_dir,
+            )
+        else:
+            logger.info("Skipping fine-tuned (no checkpoint at %s)", ft_dir)
 
     if args.output_json:
         slim = {k: {kk: vv for kk, vv in v.items() if kk != "report"} for k, v in results.items()}

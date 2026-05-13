@@ -15,6 +15,21 @@ from sklearn.metrics import (
 )
 
 
+def collapse_to_supported_vs_unsupported(labels: list[str]) -> list[str]:
+    """
+    Map three-way verification labels to binary supported vs unsupported.
+
+    ``contradicted`` and ``not_supported`` become ``unsupported``; ``supported`` stays.
+    """
+    out: list[str] = []
+    for lab in labels:
+        if lab == "supported":
+            out.append("supported")
+        else:
+            out.append("unsupported")
+    return out
+
+
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
