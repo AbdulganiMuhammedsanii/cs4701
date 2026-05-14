@@ -8,9 +8,9 @@
 
 ## Team
 
-- Abdulgani Muhammedsani — NetID: `[am-NETID]`
-- `[Teammate 2 Name]` — NetID: `[NETID]`
-- `[Teammate 3 Name]` — NetID: `[NETID]`
+- Abdulgani Muhammedsani — NetID: amm546
+- Sami Motassim — NetID: baq7
+- Bassem Elkhateeb — NetID: sm2492
 
 ## AI Keywords
 
